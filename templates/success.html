@@ -8,12 +8,8 @@
     <p>📧 A copy of the receipt has been sent to your merchant email.</p>
 
     <div class="button-group">
-        <a href="{{ url_for('receipt') }}">
-            <button>🧾 View Receipt </button>
-        </a>
-        <a href="{{ url_for('protocol') }}">
-            <button>New Transaction</button>
-        </a>
+	<a href="{{ url_for('receipt') }}"><button>🧾 Print Receipt </button></a>
+        <a href="{{ url_for('protocol') }}"><button>New Transaction</button></a>
     </div>
 </div>
 {% endblock %}

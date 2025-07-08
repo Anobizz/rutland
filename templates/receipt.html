@@ -102,8 +102,8 @@
     <div class="receipt">
       <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo" class="receipt-logo">
       <h2>RUTLAND POS</h2>
+      <p> Oakham, Uk. merchantdesk@rutland.co.uk </p>
       <div class="copy-label">Merchant Copy</div>
-
       <p><strong>Date:</strong> {{ timestamp }}</p>
       <p><strong>Txn ID:</strong> {{ txn_id }}</p>
       <p><strong>ARN:</strong> {{ arn }}</p>
@@ -114,7 +114,7 @@
       <p><strong>Amount:</strong> USD {{ amount }}</p>
       <p><strong>Payout Method:</strong> {{ payout }}</p>
       {% if wallet %}
-        <p><strong>Wallet:</strong> {{ wallet[:5] }}****{{ wallet[-4:] }}</p>
+        <p><strong>Wallet:</strong> {{ wallet[:5] }}********{{ wallet[-4:] }}</p>
       {% endif %}
       <p><strong>Authorization Code:</strong> {{ auth_code }}</p>
       <p><strong>ISO Field 18 (MCC):</strong> {{ iso_field_18 }}</p>
@@ -136,8 +136,8 @@
     <div class="receipt">
       <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo" class="receipt-logo">
       <h2>RUTLAND POS</h2>
+      <p> Oakham, UK. support@rutlandPos.co.uk </p>
       <div class="copy-label">Customer Copy</div>
-
       <p><strong>Date:</strong> {{ timestamp }}</p>
       <p><strong>Txn ID:</strong> {{ txn_id }}</p>
       <p><strong>ARN:</strong> {{ arn }}</p>
