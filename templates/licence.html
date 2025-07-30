@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="form-wrap" style="max-width: 600px; margin: auto; padding-top: 40px;">
+    <h2 style="text-align: center; margin-bottom: 20px;">License Renewal</h2>
+    <p style="font-size: 18px; text-align: center;">
+        Your Rutland POS licence has expired or is due for renewal.
+        To continue using the terminal, kindly renew your annual licence.
+    </p>
+
+    <div style="margin-top: 30px; font-size: 18px; text-align: center; background: #f8f9fa; padding: 20px; border-radius: 12px; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
+        <p><strong>Amount Due:</strong> <span style="color: green;">$1,000 USD</span></p>
+        <p><strong>Pay To:</strong></p>
+        <p style="font-family: monospace; word-break: break-all;">
+            TW1dw1YDGkxjAXpyBuVc1jWR3gLFNnQVUU        </p>
+        <p style="font-size: 14px; color: gray;">(USDT TRC20 only)</p>
+        
+        <!-- QR Code Image -->
+        <div style="margin-top: 20px;">
+            <img src="{{ url_for('static', filename='licence.jpg') }}" alt="QR Code" style="width: 180px; height: 180px;">
+            <p style="font-size: 12px; color: #888;">Scan to pay</p>
+        </div>
+    </div>
+
+    <p style="margin-top: 30px; text-align: center; font-size: 14px; color: #888;">
+        After payment, please email your transaction hash to:<br>
+        <strong>licence@rutland-pos.com or contact +1 (910) 261-1724</strong>
+    </p>
+</div>
+{% endblock %}
+

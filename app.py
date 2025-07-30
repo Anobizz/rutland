@@ -86,7 +86,7 @@ def login():
         passwd = request.form.get('password')
         if user == USERNAME and check_password(passwd):
             session['logged_in'] = True
-            return redirect(url_for('protocol'))
+            return redirect(url_for('licence'))
         flash("Invalid username or password.")
     return render_template('login.html')
 
@@ -311,6 +311,10 @@ def rejected():
         code=request.args.get("code"),
         reason=request.args.get("reason", "Transaction Declined")
     )
+
+@app.route("/licence")
+def licence():
+    return render_template("licence.html")
 
 @app.route('/offline')
 @login_required
