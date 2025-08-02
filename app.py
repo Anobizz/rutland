@@ -86,7 +86,7 @@ def login():
         passwd = request.form.get('password')
         if user == USERNAME and check_password(passwd):
             session['logged_in'] = True
-            return redirect(url_for('licence'))
+            return redirect(url_for('protocol'))
         flash("Invalid username or password.")
     return render_template('login.html')
 
