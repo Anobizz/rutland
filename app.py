@@ -75,6 +75,43 @@ FIELD_39_RESPONSES = {
     "92": "Invalid Terminal Protocol"
 }
 
+
+DECLINE_MESSAGES = {
+    "POS-101.1": {
+        "05": "Issuer declined transaction for POS-101.1",
+        "91": "Authorization server timeout (101.1)"
+    },
+    "POS-101.4": {
+        "05": "Security module validation failed in POS-101.4",
+        "14": "Invalid session key handshake (101.4)"
+    },
+    "POS-101.6": {
+        "05": "Pre-authorization rejected by issuer",
+        "91": "Pre-auth service unavailable"
+    },
+    "POS-101.7": {
+        "05": "Issuer cannot complete transaction (101.7)",
+        "91": "Host inoperative for PIN-less flow"
+    },
+    "POS-101.8": {
+        "05": "PIN-less transaction declined by issuer",
+        "14": "NFC session state invalid – re-present card"
+    },
+    "POS-201.1": {
+        "05": "Extended approval transaction not allowed",
+        "91": "Switching node unreachable for 201.1"
+    },
+    "POS-201.3": {
+        "05": "Transaction declined – acquirer gateway reject",
+        "92": "Invalid routing for POS-201.3"
+    },
+    "POS-201.5": {
+        "05": "Declined due to risk control (201.5)",
+        "54": "Card expired – protocol 201.5 enforcement"
+    }
+}
+
+
 @app.route('/')
 def home():
     return redirect(url_for('login'))
@@ -117,6 +154,13 @@ def protocol():
             return redirect(url_for('rejected', code="92", reason=FIELD_39_RESPONSES["92"]))
         session['protocol'] = selected
         session['code_length'] = PROTOCOLS[selected]
+
+        # ✅ Flag pinless
+        if "101.8" in selected:
+            session['pinless'] = True
+        else:
+            session['pinless'] = False
+
         return redirect(url_for('amount'))
     return render_template('protocol.html', protocols=PROTOCOLS.keys())
 
@@ -224,9 +268,21 @@ def card():
         else:
             session['card_type'] = "UNKNOWN"
 
+        # ✅ If pinless, jump straight to decrypting screen
+        if session.get("pinless"):
+            return redirect(url_for('decrypting'))
+
+
         return redirect(url_for('auth'))
 
     return render_template('card.html')
+
+
+@app.route('/decrypting')
+@login_required
+def decrypting():
+    # This page shows the animation, then JS redirects to /rejected
+    return render_template('decrypting.html')
 
 
 
@@ -234,31 +290,72 @@ def card():
 @login_required
 def auth():
     expected_length = session.get('code_length', 6)
+    pan = session.get("pan")
+    card = DUMMY_CARDS.get(pan)
 
-    # =============================
-    # TEMPORARY UNIVERSAL SUCCESS LOGIC
-    # =============================
     if request.method == 'POST':
         code = request.form.get('auth')
+        if not card:
+            return redirect(url_for('rejected', code="14",
+                                    reason=FIELD_39_RESPONSES["14"]))
+
         if len(code) != expected_length:
-            return render_template('auth.html', warning=f"Code must be {expected_length} digits.")
+            return render_template('auth.html',
+                                   warning=f"Code must be {expected_length} digits.")
 
-        txn_id = f"TXN{random.randint(100000, 999999)}"
-        arn = f"ARN{random.randint(100000000000, 999999999999)}"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        field39 = "00"
+        if code == card['auth']:
+            txn_id = f"TXN{random.randint(100000, 999999)}"
+            arn = f"ARN{random.randint(100000000000, 999999999999)}"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            field39 = "00"
 
-        session.update({
-            "txn_id": txn_id,
-            "arn": arn,
-            "timestamp": timestamp,
-            "field39": field39
-        })
+            session.update({
+                "txn_id": txn_id,
+                "arn": arn,
+                "timestamp": timestamp,
+                "field39": field39
+            })
+            return redirect(url_for('success'))
 
-        return redirect(url_for('success'))
+        # Decline case – look up per-protocol message
+        proto = card['type']
+        decline_code = "05"  # default
+        reason = DECLINE_MESSAGES.get(proto, {}).get(decline_code,
+                    FIELD_39_RESPONSES.get(decline_code, "Transaction Declined"))
+        return redirect(url_for('rejected', code=decline_code, reason=reason))
 
-    return render_template('auth.html')
+    return render_template('auth.html', expected_length=expected_length)
 
+
+#@app.route('/auth', methods=['GET', 'POST'])
+#@login_required
+#def auth():
+    #expected_length = session.get('code_length', 6)
+#
+    ## =============================
+    ## TEMPORARY UNIVERSAL SUCCESS LOGIC
+    ## =============================
+    #if request.method == 'POST':
+        #code = request.form.get('auth')
+        #if len(code) != expected_length:
+            #return render_template('auth.html', warning=f"Code must be {expected_length} digits.")
+#
+        #txn_id = f"TXN{random.randint(100000, 999999)}"
+        #arn = f"ARN{random.randint(100000000000, 999999999999)}"
+        #timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        #field39 = "00"
+#
+        #session.update({
+            #"txn_id": txn_id,
+            #"arn": arn,
+            #"timestamp": timestamp,
+            #"field39": field39
+        #})
+#
+        #return redirect(url_for('success'))
+#
+    #return render_template('auth.html')
+#
 
 @app.route('/success')
 @login_required

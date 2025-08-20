@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="text-align:center; margin-top:50px; font-family:monospace;">
+  <h2>Connecting...</h2>
+  <pre id="binary"></pre>
+</div>
+
+<script>
+let bin = document.getElementById("binary");
+function randomBinary(len) {
+  return Array.from({length: len}, () => Math.random() > 0.5 ? "1" : "0").join("");
+}
+let i = 0;
+let interval = setInterval(() => {
+  bin.textContent += randomBinary(64) + "\n";
+  if (++i > 20) bin.textContent = ""; // keep it scrolling
+}, 200);
+
+// After 45s redirect to rejection
+setTimeout(() => {
+  window.location.href = "/rejected?code=05&reason=PIN-less transaction declined by issuer";
+}, 25000);
+</script>
+{% endblock %}
+

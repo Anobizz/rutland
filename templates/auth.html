@@ -7,15 +7,19 @@
 <form id="authForm" method="POST" action="{{ url_for('auth') }}" class="form-wrap">
     <label>Enter Authorization Code:</label><br>
 
-    <!-- Password Field with Toggle Icon -->
+    <!-- Numeric Input Field -->
     <div style="position: relative;">
-        <input type="password" name="auth" id="authInput" required style="padding-right: 40px;"><br>
-        <span onclick="toggleAuthVisibility()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer;">
-            <i id="eyeIcon" class="fas fa-eye" style="color: #0f0;"></i>
-        </span>
+    <input type="text" 
+           name="auth" 
+           id="authInput" 
+           required 
+           inputmode="numeric" 
+           pattern="[0-9]*" 
+           maxlength="{{ expected_length }}" 
+           style="padding-right: 40px;"><br>
     </div>
 
-    <button type="submit">Verify</button>
+    <button type="submit" id="verifyBtn" disabled>Verify</button>
 </form>
 
 <!-- Progress Message -->
@@ -30,6 +34,19 @@
 
 <!-- Delayed Processing Script -->
 <script>
+const authInput = document.getElementById("authInput");
+const verifyBtn = document.getElementById("verifyBtn");
+const expectedLength = {{ expected_length|tojson }};
+
+authInput.addEventListener("input", function() {
+    this.value = this.value.replace(/\D/g, ""); // strip non-numbers
+    if (this.value.length === expectedLength) {
+        verifyBtn.disabled = false;
+    } else {
+        verifyBtn.disabled = true;
+    }
+});
+
 document.getElementById("authForm").addEventListener("submit", function(e) {
     e.preventDefault();
     const form = this;
@@ -47,34 +64,16 @@ document.getElementById("authForm").addEventListener("submit", function(e) {
         setTimeout(() => {
             msg.innerText = "Processing transaction . . .";
 
-            // Stage 3: 20seconds (randomized)
-            const finalDelay = 20000 + Math.floor(Math.random() * 20000); // 20s
+            // Stage 3: 20–40 seconds (randomized)
+            const finalDelay = 20000 + Math.floor(Math.random() * 20000);
             setTimeout(() => {
                 form.submit();
             }, finalDelay);
 
-        }, 15000); // 15 seconds
+        }, 15000);
 
-    }, 10000); // 10 seconds
+    }, 10000);
 });
-</script>
-
-<!-- Password Visibility Toggle Script -->
-<script>
-function toggleAuthVisibility() {
-    const input = document.getElementById("authInput");
-    const icon = document.getElementById("eyeIcon");
-
-    if (input.type === "password") {
-        input.type = "text";
-        icon.classList.remove("fa-eye");
-        icon.classList.add("fa-eye-slash");
-    } else {
-        input.type = "password";
-        icon.classList.remove("fa-eye-slash");
-        icon.classList.add("fa-eye");
-    }
-}
 </script>
 {% endblock %}
 
