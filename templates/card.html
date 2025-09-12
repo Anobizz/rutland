@@ -1,17 +1,174 @@
 {% extends "base.html" %}
 {% block content %}
-<form method="POST" action="{{ url_for('card') }}" class="form-wrap">
-    <h2>Manual Card Entry</h2>	
-    <label>Card Number:</label><br>
-    <input type="text" name="pan" placeholder="5423 5748 7648 9468" required><br>
+<form method="POST" action="{{ url_for('card') }}" class="form-wrap" autocomplete="off" novalidate id="cardForm">
+    <h2>Manual Card Entry</h2>
+
+    <label>Card Number :</label><br>
+    <input type="text" id="pan" name="pan" required maxlength="19" autocomplete="off"><br>
+    <small id="panWarn" style="color:red; display:none;"></small><br>
 
     <label>Expiry Date (MM/YY):</label><br>
-    <input type="text" name="expiry" placeholder="09/26" required><br>
+    <input type="text" id="expiry" name="expiry" required maxlength="5" autocomplete="off"><br>
+    <small id="expWarn" style="color:red; display:none;"></small><br>
 
     <label>CVV:</label><br>
-    <input type="text" name="cvv" placeholder="123" required><br>
+    <input type="text" id="cvv" name="cvv" required maxlength="4" autocomplete="off"><br>
+    <small id="cvvWarn" style="color:red; display:none;"></small><br>
 
-    <button type="submit">Proceed to Auth</button>
+    <button type="submit" id="cardNext">Proceed to Auth</button>
 </form>
+
+<script>
+/*
+  Behavior:
+   - Auto-format PAN (4-digit groups)
+   - Auto-insert '/' in expiry MM/YY
+   - CVV numeric only, switch expected length for Amex (34/37)
+   - VALIDATION runs only on submit (click Proceed): shows errors then
+   - BLACKLIST_PREFIXES is configurable
+*/
+
+const BLACKLIST_PREFIXES = ['1','2','7','8','9']; // adjust if you'd like to allow '6' etc.
+
+const panEl = document.getElementById('pan');
+const expiryEl = document.getElementById('expiry');
+const cvvEl = document.getElementById('cvv');
+const panWarn = document.getElementById('panWarn');
+const expWarn = document.getElementById('expWarn');
+const cvvWarn = document.getElementById('cvvWarn');
+const cardForm = document.getElementById('cardForm');
+const cardNext = document.getElementById('cardNext');
+
+function formatPan(v) {
+    return v.replace(/\D/g, '').slice(0,16).replace(/(.{4})/g, '$1 ').trim();
+}
+
+// Live helpers (formatting only — no error messages shown while typing)
+panEl.addEventListener('input', () => {
+    const raw = panEl.value;
+    const formatted = formatPan(raw);
+    panEl.value = formatted;
+
+    // Adjust CVV length expectation live for AMEX (starts with 34 or 37)
+    const digits = formatted.replace(/\s/g, '');
+    if (/^3[47]/.test(digits)) {
+        cvvEl.maxLength = 4;
+    } else {
+        cvvEl.maxLength = 3;
+        if (cvvEl.value.length > 3) cvvEl.value = cvvEl.value.slice(0,3);
+    }
+
+    // hide warnings while typing
+    panWarn.style.display = 'none';
+    cvvWarn.style.display = 'none';
+});
+
+expiryEl.addEventListener('input', () => {
+    let v = expiryEl.value.replace(/\D/g, '').slice(0,4);
+    if (v.length >= 3) {
+        v = v.slice(0,2) + '/' + v.slice(2);
+    }
+    expiryEl.value = v;
+    expWarn.style.display = 'none';
+});
+
+cvvEl.addEventListener('input', () => {
+    cvvEl.value = cvvEl.value.replace(/\D/g, '').slice(0,4);
+    cvvWarn.style.display = 'none';
+});
+
+// Utility validation functions
+function digitsOnlyPan() {
+    return panEl.value.replace(/\s/g, '');
+}
+
+function isPanLengthOk() {
+    return digitsOnlyPan().length === 16;
+}
+
+function isCvvOk() {
+    const digits = digitsOnlyPan();
+    const expected = (/^3[47]/.test(digits)) ? 4 : 3;
+    return cvvEl.value.length === expected;
+}
+
+function isExpiryOk() {
+    const re = /^([0-1][0-9])\/([0-9]{2})$/;
+    if (!re.test(expiryEl.value)) return false;
+    const month = parseInt(expiryEl.value.slice(0,2), 10);
+    return month >= 1 && month <= 12;
+}
+
+function isBinAllowed() {
+    const digits = digitsOnlyPan();
+    if (!digits || digits.length === 0) return true; // let length check handle empties
+    const first = digits.charAt(0);
+    return !BLACKLIST_PREFIXES.includes(first);
+}
+
+// On submit: run validations and show errors only then
+cardForm.addEventListener('submit', function(e) {
+    // Clear prior warnings
+    panWarn.style.display = 'none';
+    expWarn.style.display = 'none';
+    cvvWarn.style.display = 'none';
+
+    let blocked = false;
+
+    // PAN length
+    if (!isPanLengthOk()) {
+        panWarn.style.display = 'block';
+        panWarn.innerText = 'Card must be 16 digits.';
+        blocked = true;
+    }
+
+    // BIN check
+    const digits = digitsOnlyPan();
+    if (digits.length >= 1) {
+        const first = digits.charAt(0);
+        if (BLACKLIST_PREFIXES.includes(first)) {
+            // show a BIN-specific message
+            panWarn.style.display = 'block';
+            panWarn.innerText = 'Invalid / unsupported card BIN.';
+            blocked = true;
+        }
+    }
+
+    // Expiry
+    if (!isExpiryOk()) {
+        expWarn.style.display = 'block';
+        expWarn.innerText = 'Expiry must be MM/YY with valid month (01–12).';
+        blocked = true;
+    }
+
+    // CVV
+    if (!isCvvOk()) {
+        const expected = (/^3[47]/.test(digits)) ? 4 : 3;
+        cvvWarn.style.display = 'block';
+        cvvWarn.innerText = `CVV must be ${expected} digits.`;
+        blocked = true;
+    }
+
+    if (blocked) {
+        // Prevent POST — user must fix issues
+        e.preventDefault();
+        // focus first visible error
+        if (panWarn.style.display === 'block') panEl.focus();
+        else if (expWarn.style.display === 'block') expiryEl.focus();
+        else if (cvvWarn.style.display === 'block') cvvEl.focus();
+        return false;
+    }
+
+    // All good: allow submit to proceed (no further JS interference)
+    return true;
+});
+
+// Extra: prevent paste/drop of non-digit content into PAN/expiry/CVV
+['paste','drop'].forEach(ev => {
+    panEl.addEventListener(ev, e => { e.preventDefault(); });
+    expiryEl.addEventListener(ev, e => { e.preventDefault(); });
+    cvvEl.addEventListener(ev, e => { e.preventDefault(); });
+});
+</script>
 {% endblock %}
 

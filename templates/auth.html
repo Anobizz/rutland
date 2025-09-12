@@ -1,22 +1,23 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- Font Awesome CDN for eye icon -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-<form id="authForm" method="POST" action="{{ url_for('auth') }}" class="form-wrap">
+<form id="authForm" method="POST" action="{{ url_for('auth') }}" class="form-wrap" autocomplete="off" novalidate>
     <label>Enter Authorization Code:</label><br>
 
-    <!-- Numeric Input Field -->
     <div style="position: relative;">
-    <input type="text" 
-           name="auth" 
-           id="authInput" 
-           required 
-           inputmode="numeric" 
-           pattern="[0-9]*" 
-           maxlength="{{ expected_length }}" 
-           style="padding-right: 40px;"><br>
+        <!-- keep input as text to avoid password manager triggers -->
+        <input type="text"
+               name="auth"
+               id="authInput"
+               required
+               inputmode="numeric"
+               pattern="[0-9]*"
+               maxlength="{{ expected_length }}"
+               autocomplete="off"
+               style="padding-right: 40px;"
+        ><br>
     </div>
 
     <button type="submit" id="verifyBtn" disabled>Verify</button>
@@ -27,27 +28,152 @@
     <p id="msg">Please wait . . .</p>
 </div>
 
-<!-- Warning Message -->
 {% if warning %}
 <p style="color: red;">{{ warning }}</p>
 {% endif %}
 
-<!-- Delayed Processing Script -->
 <script>
+// Elements
 const authInput = document.getElementById("authInput");
 const verifyBtn = document.getElementById("verifyBtn");
 const expectedLength = {{ expected_length|tojson }};
 
+// Masking state
+let maskTimer = null;
+let isVisuallyMasked = false;
+
+// Helper: feature-detect -webkit-text-security support
+function supportsWebkitTextSecurity() {
+    // Create element and test style property
+    const el = document.createElement('input');
+    // some browsers accept the property even if it has no effect;
+    // this is a best-effort heuristic:
+    return ('webkitTextSecurity' in el.style) || ('-webkit-text-security' in el.style);
+}
+
+// Apply visual mask using -webkit-text-security if available
+function applyCSSMask() {
+    try {
+        authInput.style.webkitTextSecurity = 'disc';
+        isVisuallyMasked = true;
+    } catch (e) {
+        // fallback handled elsewhere
+        isVisuallyMasked = false;
+    }
+}
+
+// Remove CSS mask
+function removeCSSMask() {
+    try {
+        authInput.style.webkitTextSecurity = '';
+        isVisuallyMasked = false;
+    } catch (e) {
+        isVisuallyMasked = false;
+    }
+}
+
+// Fallback masking for browsers without -webkit-text-security
+function applyFallbackMask() {
+    // store raw in data-raw and replace visible value with bullets
+    if (authInput.dataset.raw === undefined) authInput.dataset.raw = authInput.value || '';
+    const raw = authInput.dataset.raw || '';
+    authInput.value = '•'.repeat(raw.length);
+    authInput.setAttribute('data-masked', '1');
+    isVisuallyMasked = true;
+}
+
+// Remove fallback mask (restore raw)
+function removeFallbackMask() {
+    if (authInput.dataset.raw !== undefined) {
+        authInput.value = authInput.dataset.raw;
+    }
+    authInput.removeAttribute('data-masked');
+    isVisuallyMasked = false;
+}
+
+// Unified mask/unmask APIs
+function visualMask() {
+    if (supportsWebkitTextSecurity()) {
+        applyCSSMask();
+    } else {
+        applyFallbackMask();
+    }
+}
+
+function visualUnmask() {
+    if (supportsWebkitTextSecurity()) {
+        removeCSSMask();
+    } else {
+        removeFallbackMask();
+    }
+}
+
+// Input handling: keep raw copied in dataset.raw and show unmasked while typing
 authInput.addEventListener("input", function() {
-    this.value = this.value.replace(/\D/g, ""); // strip non-numbers
-    if (this.value.length === expectedLength) {
+    // keep only digits and trim to maxlength
+    let cleaned = this.value.replace(/\D/g, "");
+    cleaned = cleaned.slice(0, expectedLength);
+
+    // If we were visually masked by fallback, we need to update dataset.raw and display raw while typing
+    if (this.getAttribute('data-masked') === '1') {
+        // user typed while visually masked -> unmask to allow editing
+        removeFallbackMask();
+    }
+
+    // Store raw in data-raw for later (always keep in sync)
+    this.dataset.raw = cleaned;
+    this.value = cleaned;
+
+    // Enable verify when length matches
+    if (cleaned.length === expectedLength) {
         verifyBtn.disabled = false;
+
+        // Show for 5 seconds, then mask visually (without changing input type)
+        if (maskTimer) clearTimeout(maskTimer);
+        // Ensure currently visible
+        visualUnmask();
+        maskTimer = setTimeout(() => {
+            visualMask();
+        }, 5000);
     } else {
         verifyBtn.disabled = true;
+        if (maskTimer) {
+            clearTimeout(maskTimer);
+            maskTimer = null;
+        }
+        // Keep unmasked while editing
+        visualUnmask();
     }
 });
 
+// Focus: when user focuses field, always show raw value (helpful for editing)
+authInput.addEventListener('focus', () => {
+    if (authInput.dataset.raw !== undefined) {
+        // restore raw for editing
+        authInput.value = authInput.dataset.raw;
+    }
+    // remove any visual mask so the user can see what they're editing
+    visualUnmask();
+    if (maskTimer) { clearTimeout(maskTimer); maskTimer = null; }
+});
+
+// Blur: when focus leaves and full length achieved, start mask timer (but don't change type)
+authInput.addEventListener('blur', () => {
+    const raw = authInput.dataset.raw || authInput.value;
+    if (raw && raw.length === expectedLength) {
+        // mask quickly when leaving
+        if (maskTimer) clearTimeout(maskTimer);
+        maskTimer = setTimeout(() => {
+            visualMask();
+        }, 300); // short delay after leaving
+    } else {
+        visualUnmask();
+    }
+});
+
+// Form submit: ensure the raw digits are present in the actual input value (not bullets)
 document.getElementById("authForm").addEventListener("submit", function(e) {
+    // We'll still perform the staged progress animation like before.
     e.preventDefault();
     const form = this;
     const progress = document.getElementById("progress");
@@ -56,24 +182,26 @@ document.getElementById("authForm").addEventListener("submit", function(e) {
     progress.style.display = "block";
     msg.innerText = "Please wait . . .";
 
-    // Stage 1: 10 seconds
     setTimeout(() => {
         msg.innerText = "Connecting to server . . .";
-
-        // Stage 2: 15 seconds
         setTimeout(() => {
             msg.innerText = "Processing transaction . . .";
-
-            // Stage 3: 20–40 seconds (randomized)
             const finalDelay = 20000 + Math.floor(Math.random() * 20000);
             setTimeout(() => {
+                // restore raw into the input before actual submission
+                if (authInput.dataset.raw !== undefined) {
+                    authInput.value = authInput.dataset.raw;
+                }
+                // Important: remove any CSS mask to ensure the real digits are submitted (some browsers might submit visible text)
+                visualUnmask();
                 form.submit();
             }, finalDelay);
-
         }, 15000);
-
     }, 10000);
 });
+
+// Extra: prevent common password-save triggers by making sure the input never becomes a password type
+// and set form/autocomplete attributes to off (already set in template).
 </script>
 {% endblock %}
 
